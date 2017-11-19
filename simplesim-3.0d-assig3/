@@ -124,14 +124,12 @@ instruction_t* popFromIFQ()
     {
         instruction_t* first = instr_queue[0];
         int i;
-        // move all the element to left
         for (i = 0; i < INSTR_QUEUE_SIZE-1; i++)
         {
             instr_queue[i] = instr_queue[i+1];
         }
-        // set the last element to NULL
-        instr_queue[INSTR_QUEUE_SIZE-1] = NULL;
-	    instr_queue_size--;
+        instr_queue[INSTR_QUEUE_SIZE-1]=NULL;
+        instr_queue_size--;
         return first;
     }
     else
@@ -165,7 +163,7 @@ void setMapTable(instruction_t* instr)
 		if (instr->r_out[i] != DNA && instr->r_out[i] != 0)
         {
             // set the map table entries based on the instruction output registers number
-            map_table[instr->r_out[i]]= instr;
+            map_table[r_out[i]]= instr;
         }
     }
 }
@@ -179,8 +177,7 @@ void clearMapTable(instruction_t* instr)
 		if (instr->r_out[i] != DNA && instr->r_out[i] != 0)
         {
             // clear the map table entries based on the instruction output registers number
-            // this function will be called when CDB is retired
-            map_table[instr->r_out[i]]= NULL;
+            map_table[r_out[i]]= NULL;
         }
     }
 }
@@ -201,7 +198,6 @@ void removeFromRS(instruction_t* instr)
 {
     int i;
 
-    // compare the instruction with the ones stored inside RS
     if (USES_INT_FU(instr->op))
     {
         for (i = 0; i < RESERV_INT_SIZE; i++)
@@ -224,7 +220,6 @@ void removeFromFU(instruction_t* instr)
 {
     int i;
 
-    // compare the instruction to the ones stored in FU
     if (USES_INT_FU(instr->op))
     {
         for (i = 0; i < FU_INT_SIZE; i++)
@@ -233,7 +228,6 @@ void removeFromFU(instruction_t* instr)
                 fuINT[i] = NULL;
         }
     }
-    // since we only have one FP FU, no need a for loop
     else if (USES_FP_FU(instr->op))
     {
         if(instr == fuFP[0])
@@ -255,46 +249,39 @@ void removeFromFU(instruction_t* instr)
  */
 static bool is_simulation_done(counter_t sim_insn) {
 
-    /* ECE552: YOUR CODE GOES HERE */
+  /* ECE552: YOUR CODE GOES HERE */
     /* ECE552 Assignment 3 - BEGIN CODE */
-    if (instr_queue_size > 0)
-	    return false;    
+	if (fetchIndex < sim_insn && commonDataBus == NULL && fuFP[0] == NULL){
+	    int i;
+    	    for (i = 0; i < FU_INT_SIZE; i++){
+     		if (fuINT[i] != NULL)
+        	    return false;
+             }
+ 
+            for (i = 0;i < RESERV_INT_SIZE; i++){
+                if (reservINT[i] != NULL)
+                    return false;
+            }
 
-    if (fetch_index <= sim_insn)
-        return false;
+   
+            for (i = 0;i < RESERV_FP_SIZE; i++){
+                if (reservFP[i] != NULL)
+                    return false;
+            }  
 
-    int i;
+	    for (i = 0; i < MD_TOTAL_REGS; i++){ 
+                if(map_table[i] != NULL)
+                    return false;
+            }  
+            for (i = 0; i< INSTR_QUEUE_SIZE; i++){
+                if(instr_queue[i] != NULL || instr_queue_size != 0)
+                    return false;
+            }
 
-    for (i = 0; i < RESERV_INT_SIZE; i++)
-    {
-    	if (reservINT[i] != NULL)
-    		return false;
-    }
-
-    for (i = 0; i < RESERV_FP_SIZE; i++)
-    {    
-        if (reservFP[i] != NULL)
-    	    return false;
-    }
-
-    for (i = 0; i < FU_INT_SIZE; i++)
-    {
-        if (fuINT[i] != NULL)
-            return false;
-    }
-
-    if (fuFP[0] != NULL)
-        return false;
-
-    for (i = 0; i < MD_TOTAL_REGS; i++) {
-        if (map_table[i] != NULL)
-            return false;
-    }
-    
-    if (commonDataBus != NULL)
-        return false;
-
-    return true;
+            return true;    
+        }
+	else
+ 	    return false;
     /* ECE552 Assignment 3 - END CODE */
     //ECE552: you can change this as needed; we've added this so the code provided to you compiles
 }
@@ -311,8 +298,7 @@ void CDB_To_retire(int current_cycle) {
 
     /* ECE552: YOUR CODE GOES HERE */
     /* ECE552 Assignment 3 - BEGIN CODE */
-    // check if we need to broadcast the CDB values, and make sure the cycle is ok
-    if (commonDataBus && current_cycle - 1 >= commonDataBus->tom_cdb_cycle)
+    if (commonDataBus && current_cycle - 1 >= commonDataBus)
     {
         clearMapTable(commonDataBus);
         commonDataBus = NULL;
@@ -338,10 +324,7 @@ void execute_To_CDB(int current_cycle) {
     int i;
     for (i = 0; i < FU_INT_SIZE; i++)
     {
-        // unlike issue to execute, we don't need to check execute cycle and cdb cycle
-        // because instructions in FU are definitely assigend the execute cycle, there's no need to check the execute cycle
-        // for cdb cycle, it is only assigned when CDB is empty and instruction is moved to that stage
-        if (fuINT[i] != NULL && current_cycle - FU_INT_LATENCY >= fuINT[i]->tom_execute_cycle)
+        if (fuINT[i] != NULL && fuINT[i]->tom_execute_cycle != 0 && fuINT[i]->tom_cdb_cycle == 0 && current_cycle - FU_INT_LATENCY >= fuINT[i]->tom_execute_cycle)
         {
             // if no need to write to CDB, just remove from reservation station and INT FU
             if (!WRITES_CDB(fuINT[i]->op))
@@ -354,7 +337,7 @@ void execute_To_CDB(int current_cycle) {
         }
     }
 
-    if (fuFP[0] != NULL && current_cycle - FU_FP_LATENCY >= fuFP[0]->tom_execute_cycle)
+    if (fuFP[0] != NULL && fuFP[0]->tom_execute_cycle != 0 && fuFP[0]->tom_cdb_cycle == 0 && current_cycle - FU_FP_LATENCY >= fuFP[0]->tom_execute_cycle)
     {
         if (!WRITES_CDB(fuFP[0]->op))
         {
@@ -365,7 +348,7 @@ void execute_To_CDB(int current_cycle) {
             old = fuFP[0];
     }
 
-    if (commonDataBus == NULL && old != NULL)
+    if (old != NULL)
     {
         old->tom_cdb_cycle = current_cycle;
         commonDataBus = old;
@@ -396,8 +379,7 @@ void issue_To_execute(int current_cycle) {
     for (i = 0; i < RESERV_INT_SIZE; i++)
     {
         // has to verify cycle number because we use reverse order call in run_tomasulo.
-        // without checking execute cycle number, it may add instructions already in execut stage to execute stage again
-        // same reason, we need to check issue cycle as well to make sure the instruction is already in issue stage
+        // without checking cycle number, it execute may add instructions already in execut stage to execute stage again
         if (reservINT[i] != NULL && reservINT[i]->tom_issue_cycle != 0 && reservINT[i]->tom_execute_cycle == 0 && RAWResolved(reservINT[i], current_cycle))
         {
             // get the oldest two instructions based on the index
@@ -441,7 +423,7 @@ void issue_To_execute(int current_cycle) {
         {
             // get the oldest instruction based on the index
             if (old_one == NULL || reservFP[i]->index < old_one->index)
-                old_one = reservFP[i];
+                old_one = reservINT[i];
         }
     }
 
@@ -451,7 +433,7 @@ void issue_To_execute(int current_cycle) {
         if (old_one != NULL)
         {
             old_one->tom_execute_cycle = current_cycle;
-            fuFP[0] = old_one;
+            fuINT[i] = old_one;
         }
     }
     /* ECE552 Assignment 3 - END CODE */
@@ -473,7 +455,6 @@ void dispatch_To_issue(int current_cycle) {
     for (i = 0; i < RESERV_INT_SIZE; i++)
     {
         // only set the issue cycle for the first time
-        // no need to check dispatch cycle, since it will be assigned when added to RS
         if (reservINT[i] != NULL && reservINT[i]->tom_issue_cycle == 0)
             reservINT[i]->tom_issue_cycle = current_cycle;
     }
@@ -499,20 +480,16 @@ void fetch(instruction_trace_t* trace) {
 
   /* ECE552: YOUR CODE GOES HERE */
     /* ECE552 Assignment 3 - BEGIN CODE */
-    // keep adding instructions to queue until it is full
-    if (instr_queue_size < INSTR_QUEUE_SIZE && fetch_index <= sim_num_insn)
+    while (true)
     {
         instruction_t* current_instr = get_instr(trace, fetch_index);
-		while (IS_TRAP(current_instr->op))
-		{
-			fetch_index++;
-           current_instr = get_instr(trace, fetch_index);
-	    }
-        if (current_instr != NULL)
+        fetch_index++;
+        if (!IS_TRAP(current_instr->op))
         {
-            fetch_index++;
-            pushToIFQ(current_instr);	
-       }
+            if (!pushToIFQ(current_instr))
+                fetch_index--;
+            break;
+        }
     }
     /* ECE552 Assignment 3 - END CODE */
 }
@@ -529,7 +506,6 @@ void fetch(instruction_trace_t* trace) {
 void fetch_To_dispatch(instruction_trace_t* trace, int current_cycle) {
     /* ECE552: YOUR CODE GOES HERE */
     /* ECE552 Assignment 3 - BEGIN CODE */
-    // fetch instruction and dispatch
     fetch(trace);
     instruction_t* instr = getHeadInstrFromIFQ();
     
@@ -540,7 +516,6 @@ void fetch_To_dispatch(instruction_trace_t* trace, int current_cycle) {
             instr->tom_dispatch_cycle = current_cycle;
             popFromIFQ();
         }
-        // we found an op code 0 that is none of the operation category, so we treat it as INT operation
         else if (USES_INT_FU(instr->op))
         {
             int i;
@@ -554,11 +529,10 @@ void fetch_To_dispatch(instruction_trace_t* trace, int current_cycle) {
                     instr->tom_dispatch_cycle = current_cycle;
                     reservINT[i] = instr;
                     popFromIFQ();
-					break;
                 }
             }
         }
-        else if (USES_FP_FU(instr->op))
+        else if (USE_FP_FU(instr->op))
         {
             int i;
             for (i = 0; i < RESERV_FP_SIZE; i++)
@@ -571,12 +545,9 @@ void fetch_To_dispatch(instruction_trace_t* trace, int current_cycle) {
                     instr->tom_dispatch_cycle = current_cycle;
                     reservFP[i] = instr;
                     popFromIFQ();
-					break;
                 }
             }
         }
-        else 
-            popFromIFQ();
     }
     /* ECE552 Assignment 3 - END CODE */
 }
@@ -634,13 +605,12 @@ counter_t runTomasulo(instruction_trace_t* trace)
      issue_To_execute(cycle);
      dispatch_To_issue(cycle);
      fetch_To_dispatch(trace, cycle);   
-     
+     /* ECE552 Assignment 3 - END CODE */
 
      cycle++;
-    
+
      if (is_simulation_done(sim_num_insn))
         break;
-    /* ECE552 Assignment 3 - END CODE */
   }
   
   return cycle;
