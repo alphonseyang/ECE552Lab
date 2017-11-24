@@ -505,21 +505,229 @@ cache_reg_stats(struct cache_t *cp,	/* cache instance */
 
 }
 
+/* ECE552 Assignment 4 - BEGIN CODE */
+
+md_addr_t get_PC();
+
 /* Next Line Prefetcher */
 void next_line_prefetcher(struct cache_t *cp, md_addr_t addr) {
-	; 
+	if (cp == NULL) return;
+
+	// get the address for prefetcher, construct it within block size
+	md_addr_t new_addr = addr + cp->bsize;
+	new_addr -= new_addr % cp->bsize;
+	
+	if (cache_probe(cp, new_addr) == 0)
+		cache_access(cp, Read, new_addr, NULL, cp->bsize, 0, NULL, NULL, 1);
 }
 
 /* Open Ended Prefetcher */
 void open_ended_prefetcher(struct cache_t *cp, md_addr_t addr) {
-	; 
+	if (cp == NULL) return;
+
+	int i;
+
+	if (!is_init)
+	{
+		// initalize global history buffer for miss address
+		head_index = 0;
+		for (i = 0; i < GHB_SIZE; i++)
+		{
+			ghb[i].address = 0;
+		}
+
+		for (i = 0; i < RPT_SIZE; i++)
+		{
+			rpt_open[i].tag = 0;
+			rpt_open[i].prev_addr = 0;
+			rpt_open[i].stride = 0;
+			rpt_open[i].state = INITIAL;
+		}
+
+		is_init = TRUE;
+	}
+	
+	// if the table is full, discard the oldest one
+	if (head_index == (GHB_SIZE-1) && ghb[head_index].address != 0)
+	{		
+		for (i = 0; i < GHB_SIZE-1; i++)
+		{
+			ghb[i] = ghb[i+1];
+		}
+	}
+
+	// add the new one
+	ghb[head_index].address = addr;
+
+	if (head_index < GHB_SIZE-1)
+		head_index++;
+
+	// get the RPT index based on the current pc, eliminate the effect from the non-changeable bits
+	md_addr_t pc = get_PC();
+	md_addr_t index = (pc >> 3) % RPT_SIZE;
+	
+	if (rpt_open[index].tag != pc)
+	{
+		rpt_open[index].tag = pc;
+		rpt_open[index].prev_addr = addr;
+		rpt_open[index].stride = 0;
+		rpt_open[index].state = INITIAL;
+	}
+	else
+	{
+		// change stride state 
+		int new_stride = addr - rpt_open[index].prev_addr;
+		int stride_condition = rpt_open[index].stride == new_stride ? TRUE : FALSE;
+		switch (rpt_open[index].state)
+		{
+			case INITIAL:
+				if (stride_condition)
+					rpt_open[index].state = STEADY;
+				else
+				{
+					rpt_open[index].state = TRANSIENT;
+					rpt_open[index].stride = new_stride;
+				}
+				break;
+			case TRANSIENT:
+				if (stride_condition)
+					rpt_open[index].state = STEADY;
+				else
+				{
+					rpt_open[index].state = NOPRED;
+					rpt_open[index].stride = new_stride;
+				}
+				break;
+			case STEADY:
+				if (!stride_condition)
+					rpt_open[index].state = INITIAL;
+				break;
+			case NOPRED:
+				if (stride_condition)
+					rpt_open[index].state = TRANSIENT;
+				else
+					rpt_open[index].stride = new_stride;
+				break;
+			default:
+				break;
+		}
+		
+		rpt_open[index].tag = pc;
+		rpt_open[index].prev_addr = addr;
+		
+		// only do cache access for STEADY state since we find pattern in this state
+		if (rpt_open[index].state == STEADY)
+		{
+			md_addr_t new_addr = rpt_open[index].prev_addr+rpt_open[index].stride;
+			new_addr -= new_addr % cp->bsize;
+			
+			if (cache_probe(cp, new_addr) == 0)
+				cache_access(cp, Read, new_addr, NULL, cp->bsize, 0, NULL, NULL, 1);
+		}
+		// for other states, we try to make use of the previously missing addresses
+		else
+		{
+			for (i = 0; i < head_index; i++)
+			{
+				// find the same missing address
+				if (ghb[head_index].address == addr)
+				{
+					// get the one after the missed address
+					md_addr_t new_addr = ghb[(i+1)%GHB_SIZE].address;
+					new_addr -= new_addr % cp->bsize;
+					if (cache_probe(cp, new_addr) == 0)
+					{
+						cache_access(cp, Read, new_addr, NULL, cp->bsize, 0, NULL, NULL, 1);
+						break;
+					}
+				}
+			}
+		}
+	}
 }
 
 /* Stride Prefetcher */
 void stride_prefetcher(struct cache_t *cp, md_addr_t addr) {
-	; 
+	if (cp == NULL) return;
+	
+	if (rpt == NULL)
+	{
+		//initialize the entries in RPT
+		rpt = malloc(cp->prefetch_type*sizeof(rpt_entry));
+		int i;
+		for (i = 0; i < cp->prefetch_type; i++)
+		{
+			rpt[i].tag = 0;
+			rpt[i].prev_addr = 0;
+			rpt[i].stride = 0;
+			rpt[i].state = INITIAL;
+		}
+	}
+
+	md_addr_t pc = get_PC();
+	md_addr_t index = (pc >> 3) % cp->prefetch_type;
+	
+	//if there's an different tag in this entry
+	if (rpt[index].tag != pc)
+	{
+		rpt[index].tag = pc;
+		rpt[index].prev_addr = addr;
+		rpt[index].stride = 0;
+		rpt[index].state = INITIAL;
+	}
+	else
+	{
+		int new_stride = addr - rpt[index].prev_addr;
+		int stride_condition = rpt[index].stride == new_stride ? TRUE : FALSE;
+		switch (rpt[index].state)
+		{
+			case INITIAL:
+				if (stride_condition)
+					rpt[index].state = STEADY;
+				else
+				{
+					rpt[index].state = TRANSIENT;
+					rpt[index].stride = new_stride;
+				}
+				break;
+			case TRANSIENT:
+				if (stride_condition)
+					rpt[index].state = STEADY;
+				else
+				{
+					rpt[index].state = NOPRED;
+					rpt[index].stride = new_stride;
+				}
+				break;
+			case STEADY:
+				if (!stride_condition)
+					rpt[index].state = INITIAL;
+				break;
+			case NOPRED:
+				if (stride_condition)
+					rpt[index].state = TRANSIENT;
+				else
+					rpt[index].stride = new_stride;
+				break;
+			default:
+				break;
+		}
+		
+		rpt[index].tag = pc;
+		rpt[index].prev_addr = addr;
+		
+		if (rpt[index].state != NOPRED)
+		{
+			md_addr_t new_addr = rpt[index].prev_addr+rpt[index].stride;
+			new_addr -= new_addr % cp->bsize;
+			
+			if (cache_probe(cp, new_addr) == 0)
+				cache_access(cp, Read, new_addr, NULL, cp->bsize, 0, NULL, NULL, 1);
+		}
+	}
 }
 
+/* ECE552 Assignment 4 - END CODE */
 
 /* cache x might generate a prefetch after a regular cache access to address addr */
 void generate_prefetch(struct cache_t *cp, md_addr_t addr) {

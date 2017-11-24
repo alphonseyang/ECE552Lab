@@ -110,6 +110,42 @@ enum cache_policy {
 #define CACHE_BLK_VALID		0x00000001	/* block in valid, in use */
 #define CACHE_BLK_DIRTY		0x00000002	/* dirty block */
 
+/* ECE552 Assignment 4 - BEGIN CODE */
+
+/* stride prefetcher */
+typedef enum{
+	INITIAL = 0,
+	TRANSIENT = 1,
+	STEADY = 2,
+	NOPRED = 3
+} stride_state;
+
+typedef struct{
+	md_addr_t tag;
+	md_addr_t prev_addr;
+	int stride;
+	stride_state state;
+} rpt_entry;
+
+static rpt_entry* rpt;
+
+/* openend prefetcher */
+
+#define GHB_SIZE 16
+#define RPT_SIZE 1024
+
+typedef struct{
+	md_addr_t address;
+} ghb_entry;
+
+static unsigned int is_init;
+static unsigned int head_index;
+static ghb_entry ghb[GHB_SIZE];
+
+static rpt_entry rpt_open[RPT_SIZE];
+
+/* ECE552 Assignment 4 - END CODE */
+
 /* cache block (or line) definition */
 struct cache_blk_t
 {
